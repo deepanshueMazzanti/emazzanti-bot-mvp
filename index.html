@@ -389,8 +389,10 @@
     });
   }
 
-  async function pollForReply(timeoutMs = 15000){
+  async function pollForReply(timeoutMs = 22000, quietMs = 1800){
     const start = Date.now();
+    let lastMsg = null;
+    let lastArrivedAt = null;
     while (Date.now() - start < timeoutMs){
       const res = await fetch(
         `${DL_BASE}/conversations/${conversationId}/activities${watermark ? '?watermark=' + watermark : ''}`,
@@ -399,12 +401,18 @@
       const data = await res.json();
       watermark = data.watermark;
       const replies = (data.activities || [])
-        .filter(a => a.type === 'message' && a.from && a.from.id !== 'webuser' && a.text)
-        .map(a => a.text);
-      if (replies.length) return replies.join('\n\n');
+        .filter(a => a.type === 'message' && a.from && a.from.id !== 'webuser' && a.text);
+      if (replies.length){
+        lastMsg = replies[replies.length - 1].text;
+        lastArrivedAt = Date.now();
+      }
+      // Copilot Studio sometimes sends a quick filler message ("I'll look
+      // that up.") before the real answer. Keep polling a bit past the
+      // first reply so we return the last thing it actually said.
+      if (lastMsg && Date.now() - lastArrivedAt > quietMs) return lastMsg;
       await new Promise(r => setTimeout(r, 700));
     }
-    return null;
+    return lastMsg;
   }
 
   function addMessage(role, text, isError){
