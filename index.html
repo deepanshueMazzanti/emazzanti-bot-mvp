@@ -430,38 +430,86 @@
   }
 
   function formatBotReply(raw){
-    // escape first so any literal <, >, & in the reply can't break the markup
-    let s = raw.replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;');
-
     // pull out footnote-style citations like: [1]: <url> "Title"
-    const sources = [];
-    s = s.replace(/\[(\d+)\]:\s*&lt;([^&]+)&gt;\s*"([^"]*)"/g, (m, num, url, title) => {
-      sources.push({ num, url, title });
+    let text = raw;
+    const footnotes = [];
+    text = text.replace(/\[(\d+)\]:\s*<([^>]+)>\s*"([^"]*)"/g, (m, num, url, title) => {
+      footnotes.push({ num, url, title });
       return '';
     });
 
-    // bold
-    s = s.replace(/\*\*(.+?)\*\*/g, '<strong>$1</strong>');
+    const esc = s => s.replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;');
 
-    // break numbered list items ("1. ", "2. ") and dash bullets ("- ") onto their own line
-    s = s.replace(/\s(\d+)\.\s(?=<strong>|[A-Z])/g, '\n$1. ');
-    s = s.replace(/\s-\s(?=<strong>)/g, '\n- ');
+    function inline(s){
+      s = esc(s);
+      s = s.replace(/\*\*(.+?)\*\*/g, '<strong>$1</strong>');
+      s = s.replace(/\[([^\]]+)\]\((https?:\/\/[^\s)]+)\)/g, '<a href="$2" target="_blank" rel="noopener">$1</a>');
+      s = s.replace(/\[(\d+)\]/g, (m, num) => {
+        const f = footnotes.find(x => x.num === num);
+        return f ? `<sup><a href="${f.url}" target="_blank" rel="noopener">${num}</a></sup>` : '';
+      });
+      return s;
+    }
 
-    // inline citation markers [1] -> small linked number, if we found that source
-    s = s.replace(/\[(\d+)\]/g, (m, num) => {
-      const src = sources.find(x => x.num === num);
-      return src ? `<sup><a href="${src.url}" target="_blank" rel="noopener">${num}</a></sup>` : '';
-    });
+    const lines = text.split('\n').map(l => l.trim());
+    let html = '';
+    let list = null; // { type: 'ul'|'ol', items: [] }
+    const flushList = () => {
+      if (list){
+        html += `<${list.type}>` + list.items.map(it => `<li>${it}</li>`).join('') + `</${list.type}>`;
+        list = null;
+      }
+    };
 
-    // turn remaining newlines into line breaks
-    s = s.split('\n').map(l => l.trim()).filter(Boolean).join('<br>');
+    let i = 0;
+    while (i < lines.length){
+      const line = lines[i];
 
-    if (sources.length){
-      s += '<div class="src">' + sources.map(x =>
+      if (!line){ flushList(); i++; continue; }
+      if (/^(-{3,}|_{3,})$/.test(line)){ flushList(); i++; continue; } // divider
+
+      if (/^\|.*\|$/.test(line)){
+        flushList();
+        const tableLines = [];
+        while (i < lines.length && /^\|.*\|$/.test(lines[i])){ tableLines.push(lines[i]); i++; }
+        const rows = tableLines.map(l => l.replace(/^\||\|$/g, '').split('|').map(c => c.trim()));
+        const header = rows[0];
+        let body = rows.slice(1);
+        if (body.length && body[0].every(c => /^:?-{2,}:?$/.test(c))) body = body.slice(1);
+        html += '<div class="tbl-wrap"><table><thead><tr>' +
+          header.map(c => `<th>${inline(c)}</th>`).join('') +
+          '</tr></thead><tbody>' +
+          body.map(r => '<tr>' + r.map(c => `<td>${inline(c)}</td>`).join('') + '</tr>').join('') +
+          '</tbody></table></div>';
+        continue;
+      }
+
+      let m = line.match(/^(\d+)\.\s+(.*)$/);
+      if (m){
+        if (!list || list.type !== 'ol'){ flushList(); list = { type:'ol', items:[] }; }
+        list.items.push(inline(m[2]));
+        i++; continue;
+      }
+
+      m = line.match(/^[-*]\s+(.*)$/);
+      if (m){
+        if (!list || list.type !== 'ul'){ flushList(); list = { type:'ul', items:[] }; }
+        list.items.push(inline(m[1]));
+        i++; continue;
+      }
+
+      flushList();
+      html += `<p>${inline(line)}</p>`;
+      i++;
+    }
+    flushList();
+
+    if (footnotes.length){
+      html += '<div class="src">' + footnotes.map(x =>
         `<a href="${x.url}" target="_blank" rel="noopener">${x.title || x.url}</a>`
       ).join(' · ') + '</div>';
     }
-    return s;
+    return html;
   }
 
   function addMessage(role, text, isError){
