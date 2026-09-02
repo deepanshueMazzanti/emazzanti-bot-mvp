@@ -171,6 +171,20 @@
     border-color:#F3D2CE;
     color:#8A3A31;
   }
+  .msg.bot .bubble strong{ font-weight:700; color:var(--navy); }
+  .msg.bot .bubble sup a{ color:var(--blue); text-decoration:none; }
+  .msg.bot .bubble .src{
+    margin-top:12px;
+    padding-top:10px;
+    border-top:1px solid var(--line);
+    font-size:12.5px;
+    color:var(--slate);
+  }
+  .msg.bot .bubble .src a{
+    color:var(--blue);
+    text-decoration:none;
+  }
+  .msg.bot .bubble .src a:hover{ text-decoration:underline; }
   .typing{
     display:flex; gap:5px;
     background:var(--bg-soft);
@@ -415,12 +429,48 @@
     return lastMsg;
   }
 
+  function formatBotReply(raw){
+    // escape first so any literal <, >, & in the reply can't break the markup
+    let s = raw.replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;');
+
+    // pull out footnote-style citations like: [1]: <url> "Title"
+    const sources = [];
+    s = s.replace(/\[(\d+)\]:\s*&lt;([^&]+)&gt;\s*"([^"]*)"/g, (m, num, url, title) => {
+      sources.push({ num, url, title });
+      return '';
+    });
+
+    // bold
+    s = s.replace(/\*\*(.+?)\*\*/g, '<strong>$1</strong>');
+
+    // break numbered list items ("1. ", "2. ") and dash bullets ("- ") onto their own line
+    s = s.replace(/\s(\d+)\.\s(?=<strong>|[A-Z])/g, '\n$1. ');
+    s = s.replace(/\s-\s(?=<strong>)/g, '\n- ');
+
+    // inline citation markers [1] -> small linked number, if we found that source
+    s = s.replace(/\[(\d+)\]/g, (m, num) => {
+      const src = sources.find(x => x.num === num);
+      return src ? `<sup><a href="${src.url}" target="_blank" rel="noopener">${num}</a></sup>` : '';
+    });
+
+    // turn remaining newlines into line breaks
+    s = s.split('\n').map(l => l.trim()).filter(Boolean).join('<br>');
+
+    if (sources.length){
+      s += '<div class="src">' + sources.map(x =>
+        `<a href="${x.url}" target="_blank" rel="noopener">${x.title || x.url}</a>`
+      ).join(' · ') + '</div>';
+    }
+    return s;
+  }
+
   function addMessage(role, text, isError){
     const row = document.createElement('div');
     row.className = 'msg ' + role;
     const b = document.createElement('div');
     b.className = 'bubble' + (isError ? ' error' : '');
-    b.textContent = text;
+    if (role === 'bot' && !isError) b.innerHTML = formatBotReply(text);
+    else b.textContent = text;
     row.appendChild(b);
     transcript.appendChild(row);
     transcript.scrollTop = transcript.scrollHeight;
